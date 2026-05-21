@@ -76,6 +76,16 @@ const quizzes = [
         text: "I have agency to deal with my emotions.",
         options: ["True", "False"],
         correctIndex: 0
+      },
+      {
+        text: "According to the first session, why are pleasant emotions important for flourishing?",
+        options: [
+          "Because they help build connection, creativity, and resilience",
+          "Because they eliminate all negative emotions permanently",
+          "Because they make us more productive than everyone else",
+          "Because being happy all the time is the goal of Positive Psychology"
+        ],
+        correctIndex: 1
       }
     ]
   },
