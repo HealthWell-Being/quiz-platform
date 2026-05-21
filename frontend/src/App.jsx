@@ -2,9 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { createSocket } from "./socket";
 
-const API_URL =
-  import.meta.env.VITE_SOCKET_URL ||
-  `${window.location.protocol}//${window.location.hostname}:3001`;
+const API_URL = "https://quiz-platform-2637.onrender.com";
 
 function getRoute() {
   const path = window.location.pathname.toLowerCase();

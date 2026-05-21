@@ -1,6 +1,6 @@
 import { io } from "socket.io-client";
 
-const SOCKET_URL = `${window.location.protocol}//${window.location.hostname}:3001`;
+const SOCKET_URL = "https://quiz-platform-2637.onrender.com";
 
 export function createSocket(role, key) {
   return io(SOCKET_URL, {
