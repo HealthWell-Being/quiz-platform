@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { createSocket } from "./socket";
 
+const API_URL =
+  import.meta.env.VITE_SOCKET_URL ||
+  `${window.location.protocol}//${window.location.hostname}:3001`;
+
 function getRoute() {
   const path = window.location.pathname.toLowerCase();
 
@@ -44,7 +48,7 @@ export default function App() {
   const [timeLeft, setTimeLeft] = useState(10);
 
   useEffect(() => {
-    fetch("/api/quizzes")
+    fetch(`${API_URL}/api/quizzes`)
       .then((r) => r.json())
       .then((data) => {
         setQuizzes(data);
