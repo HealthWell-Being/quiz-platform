@@ -126,14 +126,14 @@ const quizzes = [
     correctIndex: 2
   },
   {
-    text: "Which of the following is part of the PERMA-H framework?",
+    text: "According to the session, which statement best reflects the concept of flourishing?",
     options: [
-      "Relationships",
-      "Meaning",
-      "Health",
-      "All options are correct"
+      "Flourishing means feeling happy all the time",
+      "Flourishing is mainly determined by academic performance",
+      "Flourishing involves functioning well across multiple dimensions of life",
+      "Flourishing is what happens after finally reaching Inbox Zero"
     ],
-    correctIndex: 3
+    correctIndex: 2
   },
   {
     text: "Learned helplessness is contrasted in the session with…",
@@ -186,12 +186,12 @@ const quizzes = [
     correctIndex: 1
   },
   {
-    text: "According to the session, PERMA-H includes “Health” because…",
+    text: "Which of the following best describes agency?",
     options: [
-      "Well-being also depends on sleep, movement, and physical care",
-      "Physical health has no connection to flourishing",
-      "Productivity matters more than rest",
-      "Drinking iced coffee counts as self-care"
+      "Taking responsibility for our actions and recognizing our ability to influence our well-being",
+      "Waiting for circumstances to improve before making changes",
+      "Having a perfectly balanced life at all times",
+      "Convincing yourself that one more coffee will solve everything"
     ],
     correctIndex: 0
   }
