@@ -17,10 +17,7 @@ const io = new Server(server, {
 });
 
 const TEACHER_ACCESS_KEY = process.env.TEACHER_ACCESS_KEY || "profesor-2026";
-
-const QUESTION_MS = 10000;
-const REVEAL_MS = 5000;
-const RANKING_MS = 5000;
+const QUESTION_MS = 12000;
 
 const sessions = new Map();
 
@@ -43,6 +40,34 @@ function leaderboard(session) {
     .map((s, i) => ({ ...s, place: i + 1 }));
 }
 
+function getAnswerStats(session) {
+  const question = session.quiz.questions[session.currentQuestionIndex];
+  if (!question) return null;
+
+  const totalResponses = session.currentAnswers.size;
+
+  const items = question.options.map((label, index) => {
+    const count = [...session.currentAnswers.values()].filter(
+      (a) => a.answerIndex === index
+    ).length;
+
+    return {
+      index,
+      label,
+      count,
+      isCorrect: index === question.correctIndex,
+      percentage: totalResponses
+        ? Math.round((count / totalResponses) * 100)
+        : 0
+    };
+  });
+
+  return {
+    totalResponses,
+    items
+  };
+}
+
 function publicState(session) {
   const currentQuestion =
     session.currentQuestionIndex >= 0 &&
@@ -58,18 +83,15 @@ function publicState(session) {
     currentQuestionIndex: session.currentQuestionIndex,
     totalQuestions: session.quiz.questions.length,
     questionEndsAt: session.questionEndsAt,
-    revealEndsAt: session.revealEndsAt,
-    rankingEndsAt: session.rankingEndsAt,
     players: session.students.size,
     leaderboard: leaderboard(session),
+    answerStats: session.answerStats ?? null,
     currentQuestion: currentQuestion
       ? {
           text: currentQuestion.text,
           options: currentQuestion.options,
           correctIndex:
-            session.status === "reveal" ||
-            session.status === "ranking" ||
-            session.status === "finished"
+            session.status === "results" || session.status === "finished"
               ? currentQuestion.correctIndex
               : undefined
         }
@@ -91,8 +113,7 @@ function clearSessionTimer(session) {
 function finishSession(session) {
   clearSessionTimer(session);
   session.status = "finished";
-  session.revealEndsAt = null;
-  session.rankingEndsAt = null;
+  session.questionEndsAt = null;
 
   emitState(session);
   io.to(session.code).emit("game:finished", {
@@ -101,42 +122,19 @@ function finishSession(session) {
   });
 }
 
-function enterRanking(session) {
+function enterResults(session) {
   clearSessionTimer(session);
 
-  session.status = "ranking";
-  session.rankingEndsAt = Date.now() + RANKING_MS;
-  session.revealEndsAt = null;
+  session.status = "results";
+  session.questionEndsAt = null;
+  session.answerStats = getAnswerStats(session);
 
   emitState(session);
-  io.to(session.code).emit("game:ranking", {
+  io.to(session.code).emit("game:results", {
     state: publicState(session),
-    leaderboard: leaderboard(session)
+    leaderboard: leaderboard(session),
+    answerStats: session.answerStats
   });
-
-  session.timer = setTimeout(() => {
-    if (session.currentQuestionIndex >= session.quiz.questions.length - 1) {
-      finishSession(session);
-    } else {
-      startNextQuestion(session);
-    }
-  }, RANKING_MS);
-}
-
-function enterReveal(session) {
-  clearSessionTimer(session);
-
-  session.status = "reveal";
-  session.revealEndsAt = Date.now() + REVEAL_MS;
-
-  emitState(session);
-  io.to(session.code).emit("game:reveal", {
-    state: publicState(session)
-  });
-
-  session.timer = setTimeout(() => {
-    enterRanking(session);
-  }, REVEAL_MS);
 }
 
 function startNextQuestion(session) {
@@ -144,6 +142,7 @@ function startNextQuestion(session) {
 
   session.currentQuestionIndex += 1;
   session.currentAnswers = new Map();
+  session.answerStats = null;
 
   if (session.currentQuestionIndex >= session.quiz.questions.length) {
     finishSession(session);
@@ -152,8 +151,6 @@ function startNextQuestion(session) {
 
   session.status = "question";
   session.questionEndsAt = Date.now() + QUESTION_MS;
-  session.revealEndsAt = null;
-  session.rankingEndsAt = null;
 
   emitState(session);
   io.to(session.code).emit("game:question", {
@@ -161,7 +158,7 @@ function startNextQuestion(session) {
   });
 
   session.timer = setTimeout(() => {
-    enterReveal(session);
+    enterResults(session);
   }, QUESTION_MS);
 }
 
@@ -179,13 +176,12 @@ function createSession(quizId, teacherSocketId) {
     status: "lobby",
     currentQuestionIndex: -1,
     questionEndsAt: null,
-    revealEndsAt: null,
-    rankingEndsAt: null,
     teacherSocketId,
     studentKey: makeSessionKey(),
     timer: null,
     students: new Map(),
     currentAnswers: new Map(),
+    answerStats: null,
     createdAt: Date.now()
   };
 
@@ -198,19 +194,19 @@ function scoreAnswer(session, socketId, answerIndex) {
   const question = session.quiz.questions[session.currentQuestionIndex];
 
   if (!student || !question) {
-    return { ok: false, message: "No estás en una sesión activa." };
+    return { ok: false, message: "You are not in an active session." };
   }
 
   if (session.status !== "question") {
-    return { ok: false, message: "Ya no puedes responder esta pregunta." };
+    return { ok: false, message: "You can no longer answer this question." };
   }
 
   if (session.currentAnswers.has(socketId)) {
-    return { ok: false, message: "Ya respondiste esta pregunta." };
+    return { ok: false, message: "You already answered this question." };
   }
 
   if (Date.now() > session.questionEndsAt) {
-    return { ok: false, message: "Se acabó el tiempo." };
+    return { ok: false, message: "Time is up." };
   }
 
   const correct = answerIndex === question.correctIndex;
@@ -254,7 +250,7 @@ app.get("/api/session/:code", (req, res) => {
   const session = sessions.get(code);
 
   if (!session) {
-    return res.status(404).json({ error: "Sesión no encontrada" });
+    return res.status(404).json({ error: "Session not found" });
   }
 
   res.json({ state: publicState(session) });
@@ -281,13 +277,13 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   socket.on("teacher:create-session", ({ quizId }, ack) => {
     if (socket.data.role !== "teacher") {
-      return ack?.({ ok: false, message: "Solo el profesor puede crear sesiones." });
+      return ack?.({ ok: false, message: "Only the teacher can create sessions." });
     }
 
     const session = createSession(quizId, socket.id);
 
     if (!session) {
-      return ack?.({ ok: false, message: "Quiz no encontrado." });
+      return ack?.({ ok: false, message: "Quiz not found." });
     }
 
     socket.join(session.code);
@@ -305,21 +301,44 @@ io.on("connection", (socket) => {
 
   socket.on("teacher:start-session", ({ code }, ack) => {
     if (socket.data.role !== "teacher") {
-      return ack?.({ ok: false, message: "Solo el profesor puede iniciar la sesión." });
+      return ack?.({ ok: false, message: "Only the teacher can start the session." });
     }
 
     const session = sessions.get(String(code || "").toUpperCase());
 
     if (!session) {
-      return ack?.({ ok: false, message: "Sesión no encontrada." });
+      return ack?.({ ok: false, message: "Session not found." });
     }
 
     if (session.teacherSocketId !== socket.id) {
-      return ack?.({ ok: false, message: "Solo el profesor que creó la sesión puede iniciarla." });
+      return ack?.({ ok: false, message: "Only the teacher who created the session can start it." });
     }
 
     if (session.status !== "lobby") {
-      return ack?.({ ok: false, message: "La sesión ya ha empezado." });
+      return ack?.({ ok: false, message: "The session has already started." });
+    }
+
+    startNextQuestion(session);
+    ack?.({ ok: true });
+  });
+
+  socket.on("teacher:next-question", ({ code }, ack) => {
+    if (socket.data.role !== "teacher") {
+      return ack?.({ ok: false, message: "Only the teacher can advance." });
+    }
+
+    const session = sessions.get(String(code || "").toUpperCase());
+
+    if (!session) {
+      return ack?.({ ok: false, message: "Session not found." });
+    }
+
+    if (session.teacherSocketId !== socket.id) {
+      return ack?.({ ok: false, message: "Only the teacher who created the session can advance it." });
+    }
+
+    if (session.status !== "results") {
+      return ack?.({ ok: false, message: "You can only advance after the results screen." });
     }
 
     startNextQuestion(session);
@@ -328,17 +347,17 @@ io.on("connection", (socket) => {
 
   socket.on("teacher:end-session", ({ code }, ack) => {
     if (socket.data.role !== "teacher") {
-      return ack?.({ ok: false, message: "Solo el profesor puede cerrar la sesión." });
+      return ack?.({ ok: false, message: "Only the teacher can end the session." });
     }
 
     const session = sessions.get(String(code || "").toUpperCase());
 
     if (!session) {
-      return ack?.({ ok: false, message: "Sesión no encontrada." });
+      return ack?.({ ok: false, message: "Session not found." });
     }
 
     if (session.teacherSocketId !== socket.id) {
-      return ack?.({ ok: false, message: "Solo el profesor que creó la sesión puede cerrarla." });
+      return ack?.({ ok: false, message: "Only the teacher who created the session can end it." });
     }
 
     clearSessionTimer(session);
@@ -352,26 +371,26 @@ io.on("connection", (socket) => {
 
   socket.on("student:join", ({ code, name, quizId, joinKey }, ack) => {
     if (socket.data.role !== "student") {
-      return ack?.({ ok: false, message: "Solo un alumno puede entrar como alumno." });
+      return ack?.({ ok: false, message: "Only a student can join as a student." });
     }
 
     const session = sessions.get(String(code || "").toUpperCase());
 
     if (!session) {
-      return ack?.({ ok: false, message: "Código de sesión incorrecto." });
+      return ack?.({ ok: false, message: "Invalid session code." });
     }
 
     if (joinKey !== session.studentKey) {
-      return ack?.({ ok: false, message: "Ese enlace de alumno no es válido para esta sesión." });
+      return ack?.({ ok: false, message: "That student link is not valid for this session." });
     }
 
     if (quizId && quizId !== session.quizId) {
-      return ack?.({ ok: false, message: "Ese quiz no coincide con la sesión." });
+      return ack?.({ ok: false, message: "That quiz does not match the session." });
     }
 
     const cleanName = String(name || "").trim().slice(0, 24);
     if (!cleanName) {
-      return ack?.({ ok: false, message: "Escribe tu nombre." });
+      return ack?.({ ok: false, message: "Enter your name." });
     }
 
     socket.join(session.code);
@@ -386,8 +405,7 @@ io.on("connection", (socket) => {
 
     if (
       session.status === "question" ||
-      session.status === "reveal" ||
-      session.status === "ranking" ||
+      session.status === "results" ||
       session.status === "finished"
     ) {
       socket.emit("game:sync", {
@@ -398,13 +416,13 @@ io.on("connection", (socket) => {
 
   socket.on("student:answer", ({ code, answerIndex }, ack) => {
     if (socket.data.role !== "student") {
-      return ack?.({ ok: false, message: "Solo un alumno puede responder." });
+      return ack?.({ ok: false, message: "Only a student can answer." });
     }
 
     const session = sessions.get(String(code || "").toUpperCase());
 
     if (!session) {
-      return ack?.({ ok: false, message: "Sesión no encontrada." });
+      return ack?.({ ok: false, message: "Session not found." });
     }
 
     const result = scoreAnswer(session, socket.id, Number(answerIndex));
@@ -418,7 +436,7 @@ io.on("connection", (socket) => {
         clearSessionTimer(session);
         sessions.delete(code);
         io.to(code).emit("session:ended", {
-          message: "El profesor cerró la sesión."
+          message: "The teacher ended the session."
         });
         continue;
       }
