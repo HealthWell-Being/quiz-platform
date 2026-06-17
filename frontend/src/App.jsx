@@ -3,6 +3,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { createSocket } from "./socket";
 
 const API_URL = "https://quiz-platform-2637.onrender.com";
+const QUESTION_SECONDS = 12;
 
 function getRoute() {
   const path = window.location.pathname.toLowerCase();
@@ -24,6 +25,43 @@ function getMyScore(leaderboard, name) {
   return me?.score ?? 0;
 }
 
+function getPlacementInfo(leaderboard, name) {
+  const index = leaderboard.findIndex((p) => p.name === name);
+
+  if (index === -1) return null;
+
+  const me = leaderboard[index];
+  const previous = leaderboard[index - 1];
+
+  if (index === 0) {
+    return {
+      rank: 1,
+      score: me.score,
+      previousName: null,
+      pointsBehind: 0,
+      isTied: false
+    };
+  }
+
+  const pointsBehind = Math.max(0, previous.score - me.score);
+
+  return {
+    rank: index + 1,
+    score: me.score,
+    previousName: previous.name,
+    pointsBehind,
+    isTied: pointsBehind === 0
+  };
+}
+
+function isResultsPhase(status) {
+  return ["results", "reveal", "ranking"].includes(status);
+}
+
+function answerColorClass(index) {
+  return `answerColor-${index % 4}`;
+}
+
 export default function App() {
   const route = useMemo(() => getRoute(), []);
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -41,9 +79,8 @@ export default function App() {
   const [playerName, setPlayerName] = useState("");
   const [state, setState] = useState(null);
   const [message, setMessage] = useState("");
-  const [submission, setSubmission] = useState(null);
   const [selectedAnswer, setSelectedAnswer] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(10);
+  const [timeLeft, setTimeLeft] = useState(QUESTION_SECONDS);
 
   useEffect(() => {
     fetch(`${API_URL}/api/quizzes`)
@@ -66,16 +103,16 @@ export default function App() {
     };
 
     const onSessionState = (payload) => setState(payload.state);
+    const onResults = (payload) => setState(payload.state);
     const onQuestion = (payload) => {
       setState(payload.state);
       setMessage("");
-      setSubmission(null);
       setSelectedAnswer(null);
     };
-    const onReveal = (payload) => setState(payload.state);
-    const onRanking = (payload) => setState(payload.state);
     const onFinished = (payload) =>
-      setState((prev) => (prev ? { ...prev, status: "finished", leaderboard: payload.leaderboard } : prev));
+      setState((prev) =>
+        prev ? { ...prev, status: "finished", leaderboard: payload.leaderboard } : prev
+      );
     const onSync = (payload) => setState(payload.state);
     const onEnded = (payload) => {
       setMessage(payload.message);
@@ -85,8 +122,9 @@ export default function App() {
     socket.on("connect_error", onConnectError);
     socket.on("session:state", onSessionState);
     socket.on("game:question", onQuestion);
-    socket.on("game:reveal", onReveal);
-    socket.on("game:ranking", onRanking);
+    socket.on("game:results", onResults);
+    socket.on("game:reveal", onResults);
+    socket.on("game:ranking", onResults);
     socket.on("game:finished", onFinished);
     socket.on("game:sync", onSync);
     socket.on("session:ended", onEnded);
@@ -97,8 +135,9 @@ export default function App() {
       socket.off("connect_error", onConnectError);
       socket.off("session:state", onSessionState);
       socket.off("game:question", onQuestion);
-      socket.off("game:reveal", onReveal);
-      socket.off("game:ranking", onRanking);
+      socket.off("game:results", onResults);
+      socket.off("game:reveal", onResults);
+      socket.off("game:ranking", onResults);
       socket.off("game:finished", onFinished);
       socket.off("game:sync", onSync);
       socket.off("session:ended", onEnded);
@@ -140,6 +179,12 @@ export default function App() {
     });
   };
 
+  const nextQuestion = () => {
+    socket.emit("teacher:next-question", { code: sessionCode }, (res) => {
+      if (!res?.ok) setMessage(res?.message || "Could not continue.");
+    });
+  };
+
   const endSession = () => {
     socket.emit("teacher:end-session", { code: sessionCode }, (res) => {
       if (!res?.ok) setMessage(res?.message || "Could not end the session.");
@@ -177,18 +222,17 @@ export default function App() {
         setMessage(res?.message || "Could not save your answer.");
         return;
       }
-
-      setSubmission(res);
     });
   };
 
   if (route === "landing") {
     return (
-      <div className="page">
+      <div className="page landingPage">
         <div className="container">
-          <div className="card hero">
-            <h1>Quiz Platform</h1>
-            <p>Open the teacher link or the student link.</p>
+          <div className="card hero landingHero">
+            <div className="eyebrow">Quiz platform</div>
+            <h1>Live quizzes, brighter sessions</h1>
+            <p>Open the teacher link or the student link to join a session.</p>
           </div>
         </div>
       </div>
@@ -197,7 +241,7 @@ export default function App() {
 
   if (route === "teacher") {
     return (
-      <div className="page">
+      <div className="page teacherPage">
         <div className="container">
           <div className="topbar">
             <div className="status">Teacher</div>
@@ -206,7 +250,7 @@ export default function App() {
           {message ? <div className="card notice">{message}</div> : null}
 
           <div className="grid">
-            <div className="card">
+            <div className="card teacherCard">
               <h2>Create session</h2>
 
               <label>Quiz</label>
@@ -236,7 +280,7 @@ export default function App() {
                     <strong>Session code:</strong> {sessionCode}
                   </div>
 
-                  <div className="codeBox">
+                  <div className="codeBox qrCard">
                     <strong>Student QR code</strong>
                     <div className="qrWrap">
                       {studentLink ? <QRCodeSVG value={studentLink} size={180} /> : null}
@@ -253,7 +297,7 @@ export default function App() {
               </p>
             </div>
 
-            <div className="card">
+            <div className="card teacherCard">
               <h2>Status</h2>
               {!state ? (
                 <p className="muted">No active session yet.</p>
@@ -291,11 +335,16 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {state && isResultsPhase(state.status) ? (
+          <TeacherResultsModal state={state} onNext={nextQuestion} />
+        ) : null}
       </div>
     );
   }
 
   const joined = Boolean(state);
+  const showResultsPhase = Boolean(state && isResultsPhase(state.status));
 
   return (
     <div className="page studentPage">
@@ -304,7 +353,7 @@ export default function App() {
 
         {!joined ? (
           <div className="grid single">
-            <div className="card">
+            <div className="card studentCard">
               <div className="topbar">
                 <div className="status">Student</div>
               </div>
@@ -345,6 +394,17 @@ export default function App() {
               </p>
             </div>
           </div>
+        ) : showResultsPhase ? (
+          <div className="resultsHost">
+            <div className="card playHero compactHero">
+              <div className="eyebrow">Round results</div>
+              <h1>Waiting for the teacher to continue</h1>
+              <p>
+                Your personal result is shown on top. The next question will appear when the teacher clicks
+                “Next question”.
+              </p>
+            </div>
+          </div>
         ) : state.status === "lobby" ? (
           <LobbyScreen state={state} sessionCode={sessionCode} playerName={playerName} />
         ) : state.status === "question" ? (
@@ -356,19 +416,22 @@ export default function App() {
             answer={answer}
             myScore={getMyScore(state.leaderboard, playerName)}
           />
-        ) : state.status === "reveal" ? (
-          <RevealScreen
-            state={state}
-            submission={submission}
-            playerName={playerName}
-            myScore={getMyScore(state.leaderboard, playerName)}
-          />
-        ) : state.status === "ranking" ? (
-          <RankingScreen state={state} playerName={playerName} />
-        ) : (
+        ) : state.status === "finished" ? (
           <FinalScreen state={state} playerName={playerName} />
+        ) : (
+          <div className="playStage">
+            <div className="playHero compactHero">
+              <div className="eyebrow">Session</div>
+              <h1>{state.quizTitle}</h1>
+              <p>Waiting for the session to start.</p>
+            </div>
+          </div>
         )}
       </div>
+
+      {state && showResultsPhase ? (
+        <StudentResultsModal state={state} playerName={playerName} />
+      ) : null}
     </div>
   );
 }
@@ -404,7 +467,7 @@ function QuestionScreen({ state, timeLeft, playerName, selectedAnswer, answer, m
         <div className="scorePill">Points: {myScore}</div>
       </div>
 
-      <div className="playHero">
+      <div className="playHero questionHero">
         <div className="eyebrow">Hi, {playerName}</div>
         <h1>{q.text}</h1>
         <div className="timerPill">⏱ {timeLeft}s</div>
@@ -414,7 +477,7 @@ function QuestionScreen({ state, timeLeft, playerName, selectedAnswer, answer, m
         {q.options.map((opt, idx) => (
           <button
             key={opt}
-            className={`answerBtn ${selectedAnswer === idx ? "selected" : ""}`}
+            className={`answerBtn ${answerColorClass(idx)} ${selectedAnswer === idx ? "selected" : ""}`}
             onClick={() => answer(idx)}
             disabled={selectedAnswer !== null}
           >
@@ -427,70 +490,14 @@ function QuestionScreen({ state, timeLeft, playerName, selectedAnswer, answer, m
   );
 }
 
-function RevealScreen({ state, submission, playerName, myScore }) {
-  const q = state.currentQuestion;
-  const correctText = q.options[q.correctIndex];
-
-  return (
-    <div className="playStage centerStage">
-      <div className="playHero revealHero">
-        <div className="eyebrow">Hi, {playerName}</div>
-
-        {submission?.correct ? (
-          <div className="bigResult good">Correct</div>
-        ) : (
-          <div className="bigResult bad">Incorrect</div>
-        )}
-
-        {!submission?.correct ? <p className="correctAnswer">Correct answer: {correctText}</p> : null}
-
-        <div className="pointsLine">
-          You earned <strong>+{submission?.points ?? 0}</strong> points
-        </div>
-
-        <div className="smallScore">Total score: {myScore}</div>
-      </div>
-    </div>
-  );
-}
-
-function RankingScreen({ state, playerName }) {
-  const myScore = getMyScore(state.leaderboard, playerName);
-
-  return (
-    <div className="playStage">
-      <div className="playHeader">
-        <div className="progress">Updated leaderboard</div>
-        <div className="scorePill">Your score: {myScore}</div>
-      </div>
-
-      <div className="playHero compactHero">
-        <h1>Round ranking</h1>
-        <p>See how the leaderboard changes after this question.</p>
-      </div>
-
-      <div className="rankingList">
-        {state.leaderboard.map((p) => (
-          <div className={`rankingRow ${p.name === playerName ? "me" : ""}`} key={`${p.name}-${p.place}`}>
-            <div className="rankLeft">
-              <strong>{medal(p.place)}</strong>
-              <span>{p.name}</span>
-            </div>
-            <div className="rankRight">{p.score} pts</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function FinalScreen({ state, playerName }) {
   const myScore = getMyScore(state.leaderboard, playerName);
 
   return (
     <div className="playStage">
       <div className="playHero compactHero">
-        <h1>Final podium</h1>
+        <div className="eyebrow">Final podium</div>
+        <h1>Great game</h1>
         <p>Your final score: {myScore}</p>
       </div>
 
@@ -504,6 +511,114 @@ function FinalScreen({ state, playerName }) {
             <div className="rankRight">{p.score} pts</div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function TeacherResultsModal({ state, onNext }) {
+  const currentQuestion = state.currentQuestion || { options: [], correctIndex: 0, text: "" };
+  const fallbackStats = (currentQuestion.options || []).map((label, index) => ({
+    index,
+    label,
+    count: 0,
+    isCorrect: index === currentQuestion.correctIndex,
+    percentage: 0
+  }));
+
+  const stats = state.answerStats?.items?.length ? state.answerStats.items : fallbackStats;
+  const totalResponses = state.answerStats?.totalResponses ?? 0;
+  const maxCount = Math.max(1, ...stats.map((item) => item.count));
+  const correctText =
+    currentQuestion.options?.[currentQuestion.correctIndex] ?? "—";
+
+  return (
+    <div className="resultsOverlay">
+      <div className="resultsPanel">
+        <div className="resultsTopline">
+          <div>
+            <div className="eyebrow">Teacher results</div>
+            <h2>Question {state.currentQuestionIndex + 1}</h2>
+            <p className="muted">
+              Answered {totalResponses} of {state.players} players.
+            </p>
+          </div>
+
+          <div className="resultsBadge">Correct answer highlighted in green</div>
+        </div>
+
+        <div className="resultsGrid">
+          <section className="resultsCard">
+            <h3>Answer histogram</h3>
+            <p className="resultsCorrect">Correct answer: {correctText}</p>
+
+            <div className="histogram">
+              {stats.map((item) => {
+                const height = totalResponses
+                  ? Math.max(18, (item.count / maxCount) * 240)
+                  : 18;
+
+                return (
+                  <div className="histogramCol" key={item.index}>
+                    <div className="histogramTop">
+                      <strong>{item.count}</strong>
+                      <span>{item.percentage}%</span>
+                    </div>
+                    <div
+                      className={`histogramBar ${item.isCorrect ? "correct" : "wrong"}`}
+                      style={{ height: `${height}px` }}
+                    />
+                    <div className="histogramLabel">{item.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button className="btn btn-next" onClick={onNext}>
+              Next question
+            </button>
+          </section>
+
+          <section className="resultsCard resultsRankingCard">
+            <h3>Live ranking</h3>
+            <div className="resultsLeaderboard">
+              {state.leaderboard.slice(0, 10).map((p) => (
+                <div className="resultsRow" key={`${p.name}-${p.place}`}>
+                  <div className="resultsPlace">{medal(p.place)}</div>
+                  <span>{p.name}</span>
+                  <b>{p.score} pts</b>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StudentResultsModal({ state, playerName }) {
+  const info = getPlacementInfo(state.leaderboard, playerName);
+
+  if (!info) return null;
+
+  const title = info.rank === 1 ? "You're in 1st place" : `You're in #${info.rank}`;
+  const subtitle =
+    info.rank === 1
+      ? "You're leading the room."
+      : info.isTied
+        ? `You're tied with ${info.previousName}.`
+        : `You're ${info.pointsBehind} points behind ${info.previousName}.`;
+
+  return (
+    <div className="resultsOverlay">
+      <div className="resultsPanel studentResultsPanel">
+        <div className="studentResultCard">
+          <div className="eyebrow">Your result</div>
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+          <div className="studentPoints">Total score: {info.score}</div>
+        </div>
       </div>
     </div>
   );
